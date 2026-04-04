@@ -15,12 +15,16 @@ PORTFOLIO_VALUE = 1_000_000.0
 LOAN_DURATION   = 0.25 # approx 3 months
 
 # weights for the assets
+# Note: EURUSD carries the same notional as ASML.AS ($200k) because it
+# represents the EUR/USD FX component of the ASML.AS position — not an
+# additional capital allocation. Total invested capital = $1,000,000.
 WEIGHTS = {
     "AAPL":    0.25,
     "MSFT":    0.25,
-    "ASML.AS": 0.20,
+    "ASML.AS": 0.20,   # local EUR stock return
     "^GSPC":   0.20,
     "^IRX":    0.10,
+    "EURUSD":  0.20,   # FX return component of the ASML.AS position
 }
 
 def compute_component_pnl(returns):

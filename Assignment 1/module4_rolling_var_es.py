@@ -6,6 +6,10 @@ from arch import arch_model
 from tqdm import tqdm
 import warnings
 from pathlib import Path
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 
 warnings.filterwarnings("ignore")
 
@@ -126,6 +130,70 @@ def compute_rolling_risk():
     }, index=out_dates)
     
     results_df.to_csv(OUTPUT_CSV)
+    plot_rolling_var_es(results_df)
+
+
+def plot_rolling_var_es(df=None):
+    if df is None:
+        df = pd.read_csv(OUTPUT_CSV, index_col=0, parse_dates=True)
+
+    PLOTS_DIR = DATA_DIR / "plots"
+    PLOTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    models   = ["Normal", "t", "HS", "EWMA", "FHS"]
+    colours  = {"Normal": "#2196F3", "t": "#4CAF50", "HS": "#FF9800",
+                "EWMA": "#9C27B0", "FHS": "#F44336"}
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 9),
+                                   gridspec_kw={"height_ratios": [3, 1]},
+                                   sharex=True)
+
+    # ── crisis shading ──────────────────────────────────────────────
+    crisis_periods = [
+        ("2020-02-20", "2020-04-30", "#FFE0E0", "COVID-19"),
+        ("2025-04-01", "2025-06-30", "#FFF3CD", "2025/4 shock"),
+        ("2026-02-15", "2026-03-31", "#E8F5E9", "2026/3 shock"),
+    ]
+    for start, end, colour, label in crisis_periods:
+        for ax in (ax1, ax2):
+            ax.axvspan(pd.Timestamp(start), pd.Timestamp(end),
+                       color=colour, alpha=0.45, label=label)
+
+    # ── top panel: realized loss + VaR lines ────────────────────────
+    ax1.fill_between(df.index, 0, df["Loss"], where=df["Loss"] > 0,
+                     color="lightgray", alpha=0.6, label="Daily loss")
+    for m in models:
+        ax1.plot(df.index, df[f"VaR_{m}"], color=colours[m],
+                 linewidth=0.9, label=f"VaR {m}", alpha=0.85)
+
+    ax1.axhline(0, color="black", linewidth=0.6)
+    ax1.set_ylabel("Dollar Loss ($)")
+    ax1.set_title("Rolling 1-Day 99% VaR: All Models vs. Realized Loss\n"
+                  "(1000-day window, shaded = crisis periods)", fontweight="bold")
+    ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"${v:,.0f}"))
+    ax1.legend(fontsize=7.5, loc="upper left", ncol=4)
+    ax1.grid(True, alpha=0.25)
+
+    # ── bottom panel: FHS violation markers ─────────────────────────
+    violations = df["Loss"] > df["VaR_FHS"]
+    ax2.axhline(0, color="black", linewidth=0.6)
+    ax2.scatter(df.index[violations], df.loc[violations, "Loss"] - df.loc[violations, "VaR_FHS"],
+                color="#F44336", s=12, zorder=3, label="FHS violation")
+    ax2.set_ylabel("Excess ($)")
+    ax2.set_title("FHS VaR Violations", fontweight="bold", fontsize=9)
+    ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"${v:,.0f}"))
+    ax2.legend(fontsize=7.5)
+    ax2.grid(True, alpha=0.25)
+
+    ax2.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
+    ax2.xaxis.set_major_locator(mdates.YearLocator())
+    fig.autofmt_xdate(rotation=0, ha="center")
+
+    fig.tight_layout()
+    path = PLOTS_DIR / "17_rolling_var_es.png"
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    print(f"  Saved: {path.name}")
 
 
 if __name__ == "__main__":

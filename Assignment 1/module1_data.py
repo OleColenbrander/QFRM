@@ -36,10 +36,17 @@ def download_data():
     return prices.sort_index()
 
 def synchronise(prices):
-    # fill missing values because sometimes markets are closed
+    # Missing values arise when individual markets are closed on a day when
+    # others are open (e.g. US public holiday vs. EU trading day).  We use
+    # forward-fill: the last observed price carries forward until the next
+    # trading day.  This is the standard choice for financial time-series
+    # because it avoids look-ahead bias (backward-fill or interpolation would
+    # require knowledge of future prices) and preserves the "last known value"
+    # interpretation.  Dates where ALL assets are missing are dropped by
+    # compute_returns() via dropna().
     n_missing = int(prices.isna().sum().sum())
     synced = prices.ffill()
-    print(f"Fixed {n_missing} missing values")
+    print(f"Fixed {n_missing} missing values (forward-fill)")
     return synced
 
 
@@ -47,18 +54,20 @@ def synchronise(prices):
 def compute_returns(prices):
     # calculate logs
     returns = pd.DataFrame(index=prices.index[1:])
-    
+
     for t in EQUITY_TICKERS:
         returns[t] = np.log(prices[t] / prices[t].shift(1)).iloc[1:]
-        
-    # add fx risk to ASML 
-    if "ASML.AS" in returns.columns and "EURUSD=X" in prices.columns:
+    # ASML.AS stays as the LOCAL EUR stock return; EUR/USD FX is a separate column
+
+    # EUR/USD as an explicit risk factor — represents the FX exposure of the
+    # ASML.AS position (USD investor holds a EUR-denominated stock).
+    if "EURUSD=X" in prices.columns:
         fx = np.log(prices["EURUSD=X"] / prices["EURUSD=X"].shift(1)).iloc[1:]
-        returns["ASML.AS"] = returns["ASML.AS"] + fx
+        returns["EURUSD"] = fx
 
     for t in RATE_TICKERS:
         returns[t] = prices[t].diff().iloc[1:]
-        
+
     returns = returns.dropna()
     print(f"returns calculated, len: {len(returns)}")
     return returns
