@@ -6,11 +6,11 @@ Portfolio Composition & Weight Justification
 ---------------------------------------------
 The portfolio holds five instruments with fixed weights that sum to 1.0 (could be adapted):
 
-    AAPL   0.25   (equity)
-    MSFT   0.25   (equity)
-    GOOGL  0.20   (equity)
-    ^GSPC  0.20   (equity index)
-    ^IRX   0.10   (floating-rate loan proxy)
+    AAPL     0.25   (equity)
+    MSFT     0.25   (equity)
+    ASML.AS  0.20   (foreign equity, EUR)
+    ^GSPC    0.20   (equity index)
+    ^IRX     0.10   (floating-rate loan proxy)
 
 Weight rationale:
 
@@ -19,10 +19,9 @@ Weight rationale:
    avoids an arbitrary tilt toward either and is consistent with a large-cap
    growth allocation.
 
-2. GOOGL (20%): A third mega-cap technology name that adds sectoral breadth
-   (search, cloud, advertising) while keeping the individual stock allocation
-   somewhat smaller than AAPL/MSFT, reflecting its historically higher
-   idiosyncratic volatility in the sample.
+2. ASML.AS (20%): Replaces GOOGL to introduce foreign currency exposure (EUR) 
+   and test stress-testing scenarios for FX rates, as outlined in the assignment.
+   The return integrates both local stock performance and EUR/USD fluctuations.
 
 3. ^GSPC (20%): A broad-market index position (e.g. an S&P 500 ETF/futures)
    provides systematic risk exposure, introduces diversification across the
@@ -93,11 +92,11 @@ PORTFOLIO_VALUE = 1_000_000.0
 LOAN_DURATION   = 0.25
 
 WEIGHTS = {
-    "AAPL":  0.25,
-    "MSFT":  0.25,
-    "GOOGL": 0.20,
-    "^GSPC": 0.20,
-    "^IRX":  0.10,
+    "AAPL":    0.25,
+    "MSFT":    0.25,
+    "ASML.AS": 0.20,
+    "^GSPC":   0.20,
+    "^IRX":    0.10,
 }
 
 

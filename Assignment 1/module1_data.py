@@ -5,7 +5,7 @@ Module 1: Data Acquisition & Preprocessing
 Purpose
 -------
 Fetch, clean, synchronise, and compute returns for a multi-asset portfolio:
-  - Equities  : AAPL, MSFT, GOOGL
+  - Equities  : AAPL, MSFT, ASML.AS
   - Index     : ^GSPC (S&P 500)
   - Loan proxy: ^IRX  (13-week US T-Bill yield, floating-rate loan proxy;
                         yield *changes* replace log-returns for this series)
@@ -39,9 +39,10 @@ import matplotlib.dates as mdates
 START_DATE = "2016-01-01"
 END_DATE   = "2026-03-31"
 
-EQUITY_TICKERS = ("AAPL", "MSFT", "GOOGL", "^GSPC")
+EQUITY_TICKERS = ("AAPL", "MSFT", "ASML.AS", "^GSPC")
 RATE_TICKERS   = ("^IRX",)
-ALL_TICKERS    = EQUITY_TICKERS + RATE_TICKERS
+FX_TICKERS     = ("EURUSD=X",)
+ALL_TICKERS    = EQUITY_TICKERS + RATE_TICKERS + FX_TICKERS
 
 DATA_DIR    = Path(__file__).parent / "data"
 PRICES_CSV  = DATA_DIR / "raw_prices.csv"
@@ -73,6 +74,12 @@ def compute_returns(prices):
     returns = pd.DataFrame(index=prices.index[1:])
     for ticker in EQUITY_TICKERS:
         returns[ticker] = np.log(prices[ticker] / prices[ticker].shift(1)).iloc[1:]
+        
+    # Integrate currency (EUR/USD) returns directly into ASML.AS
+    if "ASML.AS" in returns.columns and "EURUSD=X" in prices.columns:
+        fx_returns = np.log(prices["EURUSD=X"] / prices["EURUSD=X"].shift(1)).iloc[1:]
+        returns["ASML.AS"] = returns["ASML.AS"] + fx_returns
+
     for ticker in RATE_TICKERS:
         returns[ticker] = prices[ticker].diff().iloc[1:]
     print(f"Returns computed: {len(returns)} observations.")
