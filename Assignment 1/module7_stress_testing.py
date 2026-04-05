@@ -1,55 +1,4 @@
-"""
-Module 7: Stress Testing
-========================
 
-Objective
----------
-Examine the portfolio's exposure to extreme but plausible market shocks across
-four risk categories mandated by the assignment, and quantify the impact on
-both the instantaneous portfolio P&L and the 99% historical-simulation VaR.
-
-Portfolio recap
----------------
-  AAPL     25%   US equity               (USD)
-  MSFT     25%   US equity               (USD)
-  ASML.AS  20%   European equity         (local EUR return)
-  EURUSD   —     FX component of ASML.AS (EUR/USD return, same $200k notional)
-  ^GSPC    20%   US equity index         (USD)
-  ^IRX     10%   Floating-rate loan proxy (yield-change based, duration 0.25)
-
-Stress categories (assignment specification)
---------------------------------------------
-1. Equity / index  : ±20% and ±40% price shocks to AAPL, MSFT, ASML.AS, ^GSPC
-2. FX              : ±10% (major) and ±20% (extreme) shock to EUR/USD
-                     Applied to the explicit EURUSD column ($200k notional)
-3. Commodities     : NOT APPLICABLE — portfolio holds no commodity positions
-4. Interest rates  : ±2 pp and ±3 pp parallel yield shift on ^IRX
-
-Where is the shock applied?
----------------------------
-The shock is applied to EVERY OBSERVATION in the historical return series.
-This is equivalent to asking: "If the market had been systematically X%
-worse/better every single day, what would the historical distribution of
-losses look like, and what VaR would we have estimated?"
-
-Under a uniform additive shock s to return r, the loss shifts by −a·s for
-each observation, so the empirical 99th-percentile (HS VaR) shifts by exactly
-−a·s as well — an analytical identity verified numerically below.
-
-What values of VaR change?
---------------------------
-Only VaR components linked to the shocked risk factor change:
-  - Equity shock  → moves VaR by w_equity · V₀ · |shock| (90% of portfolio)
-  - FX shock      → moves VaR by w_ASML   · V₀ · |shock| (20% of portfolio)
-  - Rate shock    → moves VaR by D_mod · w_IRX · V₀ · |Δy/100| (tiny, ~0.5%+)
-  - Commodity     → no movement (zero exposure)
-
-Expected findings
------------------
-The portfolio is equity-dominated (90% weight) so equity shocks produce by far
-the largest VaR changes. The FX effect is moderate (20% exposure). The interest-
-rate impact is negligible due to the short duration (0.25) of the loan proxy.
-"""
 
 import warnings
 from pathlib import Path
@@ -75,21 +24,19 @@ OUTPUT_CSV = DATA_DIR / "stress_test_results.csv"
 # ── Parameters ─────────────────────────────────────────────────────────────────
 ALPHA = 0.99
 
-EQUITY_TICKERS   = ["AAPL", "MSFT", "ASML.AS", "^GSPC"]   # shock applied to all
-FX_TICKER        = "EURUSD"                                  # explicit EUR/USD column
+EQUITY_TICKERS   = ["AAPL", "MSFT", "ASML.AS", "^GSPC"]  
+FX_TICKER        = "EURUSD"                                 
 RATE_TICKER      = "^IRX"
 
-# Shocks — sign convention: positive = market up, negative = market down
-EQUITY_SHOCKS    = [-0.40, -0.20, +0.20, +0.40]            # proportional price changes
-FX_SHOCKS        = [-0.20, -0.10, +0.10, +0.20]            # EUR/USD proportional moves
-RATE_SHOCKS      = [-3.0,  -2.0,  +2.0,  +3.0]             # yield changes in pp
-COMMODITY_SHOCKS = [-0.40, -0.20, +0.20, +0.40]            # proportional price changes
-# Note: the portfolio holds NO commodity positions (no oil, gold, agricultural
-# futures, etc.).  All four commodity shock levels are evaluated and will
-# produce ΔVaR = $0, confirming zero commodity exposure.
+# Shocks
+EQUITY_SHOCKS    = [-0.40, -0.20, +0.20, +0.40]            # 
+FX_SHOCKS        = [-0.20, -0.10, +0.10, +0.20]            
+RATE_SHOCKS      = [-3.0,  -2.0,  +2.0,  +3.0]            
+COMMODITY_SHOCKS = [-0.40, -0.20, +0.20, +0.40]            
+# Note: the portfolio holds NO commodity position
 
 
-# ── Core utilities ─────────────────────────────────────────────────────────────
+# ── Core functions ─────────────────────────────────────────────────────────────
 
 def hs_var(losses: np.ndarray, alpha: float = ALPHA) -> float:
     """Historical-simulation VaR: empirical alpha-quantile of the loss series."""
@@ -98,10 +45,6 @@ def hs_var(losses: np.ndarray, alpha: float = ALPHA) -> float:
 
 
 def recompute_losses(returns: pd.DataFrame) -> np.ndarray:
-    """
-    Compute portfolio daily losses from a (possibly shocked) returns DataFrame
-    using the same sensitivity framework as module2.
-    """
     pnl_cols = {}
     for ticker in WEIGHTS:
         if ticker not in returns.columns:
@@ -122,42 +65,47 @@ def strip_nan(arr: np.ndarray) -> np.ndarray:
 
 # ── Shock applicators ──────────────────────────────────────────────────────────
 
-def equity_shocked(returns: pd.DataFrame, shock: float) -> pd.DataFrame:
+def _shock_indices(n: int, n_shocks: int) -> np.ndarray:
+    """Return n_shocks indices spread evenly across a series of length n."""
+    return np.round(np.linspace(0, n - 1, n_shocks)).astype(int)
+
+
+def equity_shocked(returns: pd.DataFrame, shock: float, n_shocks: int = 5) -> pd.DataFrame:
     """
-    Add a uniform log-return shock to all equity tickers simultaneously.
-    Models a market-wide price move of 'shock' (e.g., −0.20 = prices fall 20%).
+    Add a log-return shock to all equity tickers on n_shocks evenly-spaced days.
+    Models the stress event occurring n_shocks times across the historical window
+    (e.g., n_shocks=5 over ~10 years ≈ once every two years).
     """
     r = returns.copy()
+    idx = _shock_indices(len(r), n_shocks)
     for t in EQUITY_TICKERS:
         if t in r.columns:
-            r[t] = r[t] + shock
+            r[t].iloc[idx] += shock
     return r
 
 
-def fx_shocked(returns: pd.DataFrame, shock: float) -> pd.DataFrame:
+def fx_shocked(returns: pd.DataFrame, shock: float, n_shocks: int = 5) -> pd.DataFrame:
     """
-    Add a pure EUR/USD shock to the EURUSD column.
+    Add a EUR/USD shock to the EURUSD column on n_shocks evenly-spaced days.
     ASML.AS carries only the local EUR stock return; the EUR/USD FX return
     is modelled as a separate risk factor (EURUSD column, same $200k notional).
-    A FX shock therefore shifts only the EURUSD column, leaving the local
-    ASML.AS equity return unchanged.
     """
     r = returns.copy()
+    idx = _shock_indices(len(r), n_shocks)
     if FX_TICKER in r.columns:
-        r[FX_TICKER] = r[FX_TICKER] + shock
+        r[FX_TICKER].iloc[idx] += shock
     return r
 
 
-def rate_shocked(returns: pd.DataFrame, shock_pp: float) -> pd.DataFrame:
+def rate_shocked(returns: pd.DataFrame, shock_pp: float, n_shocks: int = 5) -> pd.DataFrame:
     """
-    Apply a parallel yield shift of 'shock_pp' percentage points to ^IRX.
-    The ^IRX column contains daily yield *changes* (Δy in pp).  Adding a
-    constant Δy to every observation represents a one-time repricing of the
-    entire yield curve by 'shock_pp' pp on top of every historical move.
+    Apply a parallel yield shift of 'shock_pp' pp to ^IRX on n_shocks
+    evenly-spaced days across the historical window.
     """
     r = returns.copy()
+    idx = _shock_indices(len(r), n_shocks)
     if RATE_TICKER in r.columns:
-        r[RATE_TICKER] = r[RATE_TICKER] + shock_pp
+        r[RATE_TICKER].iloc[idx] += shock_pp
     return r
 
 
@@ -181,22 +129,16 @@ def inst_pnl_rate(shock_pp: float) -> float:
 
 # ── Stress test runner ─────────────────────────────────────────────────────────
 
-def run_stress_tests(returns: pd.DataFrame, baseline_losses: np.ndarray) -> pd.DataFrame:
-    """
-    For every scenario, compute:
-      - Instantaneous P&L   : dollar effect of applying the shock once
-      - Stressed VaR        : 99% HS VaR on the fully-shocked loss distribution
-      - ΔVaR                : stressed VaR − baseline VaR
-      - Analytical ΔVaR     : −inst_pnl (identity holds under uniform additive shock)
-      - Residual            : numerical − analytical (should be < $1 rounding noise)
-    """
+def run_stress_tests(returns: pd.DataFrame, baseline_losses: np.ndarray,
+                     n_shocks: int = 5) -> pd.DataFrame:
+
     base_var = hs_var(baseline_losses)
     rows = []
 
     # ── 1. Equity shocks ───────────────────────────────────────────────────────
     for s in EQUITY_SHOCKS:
         ipnl        = inst_pnl_equity(s)
-        s_losses    = recompute_losses(equity_shocked(returns, s))
+        s_losses    = recompute_losses(equity_shocked(returns, s, n_shocks=n_shocks))
         s_var       = hs_var(s_losses)
         label       = f"{'+' if s >= 0 else ''}{s*100:.0f}%"
         rows.append(_row("Equity (all)", label, ", ".join(EQUITY_TICKERS),
@@ -205,7 +147,7 @@ def run_stress_tests(returns: pd.DataFrame, baseline_losses: np.ndarray) -> pd.D
     # ── 2. FX shocks ──────────────────────────────────────────────────────────
     for s in FX_SHOCKS:
         ipnl        = inst_pnl_fx(s)
-        s_losses    = recompute_losses(fx_shocked(returns, s))
+        s_losses    = recompute_losses(fx_shocked(returns, s, n_shocks=n_shocks))
         s_var       = hs_var(s_losses)
         severity    = "major" if abs(s) <= 0.10 else "extreme"
         label       = f"{'+' if s >= 0 else ''}{s*100:.0f}% [{severity}]"
@@ -215,16 +157,14 @@ def run_stress_tests(returns: pd.DataFrame, baseline_losses: np.ndarray) -> pd.D
     # ── 3. Interest rate shocks ───────────────────────────────────────────────
     for s in RATE_SHOCKS:
         ipnl        = inst_pnl_rate(s)
-        s_losses    = recompute_losses(rate_shocked(returns, s))
+        s_losses    = recompute_losses(rate_shocked(returns, s, n_shocks=n_shocks))
         s_var       = hs_var(s_losses)
         label       = f"{'+' if s >= 0 else ''}{s:.0f} pp"
         rows.append(_row("Interest Rate (^IRX)", label, RATE_TICKER,
                          base_var, s_var, ipnl))
 
     # ── 4. Commodity shocks ───────────────────────────────────────────────────
-    # The portfolio has no commodity positions.  Every shock level is listed
-    # explicitly so the result table is complete; all entries will show
-    # Inst_PnL = $0 and ΔVaR = $0, confirming zero commodity exposure.
+    # The portfolio has no commodity positions.
     for s in COMMODITY_SHOCKS:
         label = f"{'+' if s >= 0 else ''}{s*100:.0f}%"
         rows.append({
@@ -244,20 +184,17 @@ def run_stress_tests(returns: pd.DataFrame, baseline_losses: np.ndarray) -> pd.D
 
 
 def _row(category, shock_label, tickers, base_var, s_var, ipnl):
-    delta    = s_var - base_var
-    pct      = delta / base_var * 100 if base_var != 0 else np.nan
-    analytic = -ipnl          # identity: VaR_stressed = VaR_base − inst_pnl
+    delta = s_var - base_var
+    pct   = delta / base_var * 100 if base_var != 0 else np.nan
     return {
-        "Category":           category,
-        "Shock":              shock_label,
-        "Tickers":            tickers,
-        "Inst_PnL":           round(ipnl,      2),
-        "Baseline_VaR":       round(base_var,  2),
-        "Stressed_VaR":       round(s_var,     2),
-        "Delta_VaR":          round(delta,     2),
-        "Delta_VaR_pct":      round(pct,       2),
-        "Analytic_Delta_VaR": round(analytic,  2),
-        "Residual":           round(delta - analytic, 2),
+        "Category":      category,
+        "Shock":         shock_label,
+        "Tickers":       tickers,
+        "Inst_PnL":      round(ipnl,     2),
+        "Baseline_VaR":  round(base_var, 2),
+        "Stressed_VaR":  round(s_var,    2),
+        "Delta_VaR":     round(delta,    2),
+        "Delta_VaR_pct": round(pct,      2),
     }
 
 
@@ -308,9 +245,6 @@ def plot_tornado(results: pd.DataFrame) -> None:
 
 
 def plot_by_category(results: pd.DataFrame, baseline_var: float) -> None:
-    """
-    One grouped subplot per stress category comparing baseline vs stressed VaR.
-    """
     cats = list(results["Category"].unique())
     fig, axes = plt.subplots(1, len(cats), figsize=(5 * len(cats), 5), sharey=False)
     if len(cats) == 1:
@@ -350,10 +284,7 @@ def plot_by_category(results: pd.DataFrame, baseline_var: float) -> None:
 def plot_distribution_overlay(returns: pd.DataFrame,
                                baseline_losses: np.ndarray,
                                baseline_var: float) -> None:
-    """
-    Overlay of four key stressed loss distributions vs baseline, showing how
-    extreme equity and FX shocks shift the entire loss distribution.
-    """
+
     scenarios = [
         ("Equity −40%",  recompute_losses(equity_shocked(returns, -0.40)), "#b71c1c"),
         ("Equity −20%",  recompute_losses(equity_shocked(returns, -0.20)), "#e57373"),
@@ -390,10 +321,7 @@ def plot_distribution_overlay(returns: pd.DataFrame,
 
 
 def plot_var_sensitivity(results: pd.DataFrame) -> None:
-    """
-    Line plot showing stressed VaR as a function of shock magnitude,
-    separately for equity and FX shocks.
-    """
+
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
     for ax, cat, shocks, xlabel in [
@@ -458,24 +386,11 @@ def print_results(results: pd.DataFrame) -> None:
                   f"${row['Stressed_VaR']:>13,.0f} "
                   f"{delta_str:>12} {pct_str:>8}")
 
-    print(f"\n{'═'*72}")
-    print("  Verification: analytical ΔVaR = −Inst_PnL  (uniform-shift identity)")
-    print(f"{'─'*72}")
-    chk = results[results["Category"] != "Commodity"][["Category", "Shock", "Residual"]]
-    chk = chk[chk["Residual"].abs() > 1.0]    # flag any residuals > $1
-    if chk.empty:
-        print("  All residuals < $1  ✓  (numerical HS = analytical exactly)")
-    else:
-        print(chk.to_string(index=False))
-
     pd.reset_option("display.float_format")
 
 
 def print_interpretation(results: pd.DataFrame) -> None:
     base_var = results["Baseline_VaR"].iloc[0]
-    print(f"\n{'═'*72}")
-    print("  Interpretation & Comparison with Prior Expectations")
-    print(f"{'═'*72}")
 
     eq_40_down = results[
         (results["Category"] == "Equity (all)") & (results["Shock"] == "-40%")
@@ -493,38 +408,6 @@ def print_interpretation(results: pd.DataFrame) -> None:
     eq_exposure  = sum(WEIGHTS[t] for t in EQUITY_TICKERS) * PORTFOLIO_VALUE
     fx_exposure  = WEIGHTS[FX_TICKER] * PORTFOLIO_VALUE
     rate_dv01    = LOAN_DURATION * WEIGHTS[RATE_TICKER] * PORTFOLIO_VALUE / 100.0  # per 1 pp
-
-    print(f"""
-  1. EQUITY SHOCKS (90% of portfolio = ${eq_exposure:,.0f})
-     Expected  : equity dominates VaR; −40% shock ≈ +${0.4 * eq_exposure:,.0f} extra loss.
-     Observed  : ΔVaR for −40% shock = ${eq_40_down:+,.0f}.
-     Match?    : {"YES — as expected." if abs(eq_40_down - 0.4 * eq_exposure) / eq_exposure < 0.02 else "CLOSE — small discrepancy from non-linearity."}
-     Note      : A +40% equity rally makes the stressed VaR negative, meaning
-                 the portfolio is virtually certain to profit at 99% confidence.
-
-  2. FX SHOCK (EUR/USD, 20% of portfolio = ${fx_exposure:,.0f})
-     Expected  : moderate VaR change; −10% EUR ≈ ${0.10 * fx_exposure:,.0f} additional loss.
-     Observed  : ΔVaR for −10% FX shock = ${fx_10_down:+,.0f}.
-     Match?    : {"YES — as expected." if abs(fx_10_down - 0.10 * fx_exposure) / fx_exposure < 0.02 else "CLOSE — small discrepancy."}
-     Note      : EUR is the only foreign currency in the portfolio.  A EUR
-                 depreciation hurts the USD value of ASML.AS.
-
-  3. INTEREST RATE SHOCK (^IRX, D_mod = {LOAN_DURATION}, 10% of portfolio)
-     DV01 per 1pp shift = ${rate_dv01:,.0f} (tiny — short-duration instrument).
-     Expected  : negligible VaR change; +2pp ≈ ${2 * rate_dv01:,.0f} extra loss.
-     Observed  : ΔVaR for +2pp rate shock = ${rate_2_up:+,.0f}.
-     Match?    : {"YES — as expected." if abs(rate_2_up - 2 * rate_dv01) < 10 else "CLOSE."}
-     Note      : The 0.25-year duration makes the loan practically immune to
-                 rate shocks compared with equity and FX risk.
-
-  4. COMMODITY SHOCKS (±20%, ±40%)
-     Portfolio has ZERO direct commodity exposure (no oil, gold, gas futures,
-     agricultural contracts, or commodity-linked ETFs).
-     Inst. P&L = $0 and ΔVaR = $0 for all four shock levels, confirming
-     that the portfolio is completely insensitive to commodity price moves.
-     Note: indirect exposure through equity (e.g., energy stocks in ^GSPC)
-     is implicitly captured by the equity stress scenarios, not here.
-""")
     print(f"{'═'*72}")
 
 
@@ -544,7 +427,7 @@ def run(force_rebuild: bool = False) -> pd.DataFrame:
     print(f"Sample size (clean obs)     : {len(baseline_losses):,}")
 
     print("\nRunning stress scenarios ...")
-    results = run_stress_tests(returns, losses.values.astype(float))
+    results = run_stress_tests(returns, losses.values.astype(float), n_shocks=5)
 
     print_results(results)
     print_interpretation(results)

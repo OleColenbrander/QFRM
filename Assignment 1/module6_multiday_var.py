@@ -1,35 +1,3 @@
-"""
-Module 6: Multi-Day VaR – Historical Simulation vs. Square-Root-of-Time Rule
-=============================================================================
-
-Objective
----------
-Construct 1-, 5- and 10-day 99% VaR using non-overlapping return blocks at the
-respective frequency (direct historical simulation), then compare with the
-scaled 1-day VaR obtained via the square-root-of-time (SQRT) rule:
-
-    VaR(h) ≈ VaR(1) × √h
-
-The comparison reveals whether the iid / normality assumption embedded in the
-SQRT rule holds for this portfolio.
-
-Approach
---------
-1. Non-overlapping h-day losses:
-   - Form non-overlapping blocks of h consecutive daily portfolio P&L values.
-   - Sum each block → h-day P&L; negate → h-day loss.
-   - The 99th percentile of the resulting empirical distribution is the
-     direct h-day historical-simulation VaR.
-
-2. Square-root-of-time (SQRT) rule:
-   - Scale the 1-day historical-simulation VaR by √h.
-
-Both approaches are applied at the total portfolio level and per component.
-The ratio  HS_VaR(h) / (VaR(1) × √h)  quantifies how well the SQRT rule fits:
-  ratio > 1  → SQRT rule underestimates true multi-day risk (fat tails / autocorrelation)
-  ratio < 1  → SQRT rule overestimates
-  ratio ≈ 1  → SQRT rule is a decent approximation
-"""
 
 import warnings
 from pathlib import Path
@@ -57,34 +25,21 @@ HORIZONS = [1, 5, 10]
 # ── Core functions ─────────────────────────────────────────────────────────────
 
 def historical_var(losses: np.ndarray, alpha: float = ALPHA) -> float:
-    """99th-percentile empirical quantile (historical-simulation VaR)."""
     return float(np.quantile(losses, alpha))
 
 
 def build_nonoverlapping_losses(daily_losses: np.ndarray, h: int) -> np.ndarray:
-    """
-    Aggregate daily losses into non-overlapping h-day blocks by summing.
-    Tail observations that do not complete a full block are discarded.
-    """
     n_blocks = len(daily_losses) // h
     blocks   = daily_losses[: n_blocks * h].reshape(n_blocks, h)
     return blocks.sum(axis=1)
 
 
 def compute_multiday_var(pnl: pd.DataFrame, losses: pd.Series) -> pd.DataFrame:
-    """
-    Compute direct HS VaR and SQRT-rule VaR for every horizon and entity.
-
-    Returns a tidy DataFrame with columns:
-        Horizon | Entity | N_obs | HS_VaR | SQRT_VaR | Ratio_HS_over_SQRT
-    """
     entities = list(pnl.columns) + ["Portfolio"]
 
     # Drop NaN rows per component before aggregating.
     # Individual series (e.g. ASML.AS, ^IRX) may have NaN on dates where that
-    # exchange was closed; pnl.sum(axis=1) skips them silently (skipna=True)
-    # so the portfolio series is clean while individual component arrays are not.
-    # np.quantile propagates NaN, so we must strip it per series first.
+    # exchange was closed; pnl.sum(axis=1) skips them(skipna=True)
     daily_loss: dict[str, np.ndarray] = {}
     for c in pnl.columns:
         arr = -pnl[c].values.astype(float)
@@ -117,7 +72,6 @@ def compute_multiday_var(pnl: pd.DataFrame, losses: pd.Series) -> pd.DataFrame:
 # ── Plotting ───────────────────────────────────────────────────────────────────
 
 def plot_portfolio_comparison(results: pd.DataFrame) -> None:
-    """Grouped bar chart: direct HS VaR vs. SQRT-rule VaR for each horizon."""
     port = results[results["Entity"] == "Portfolio"].set_index("Horizon")
 
     x = np.arange(len(HORIZONS))
@@ -153,10 +107,6 @@ def plot_portfolio_comparison(results: pd.DataFrame) -> None:
 
 
 def plot_loss_distributions(daily_losses: np.ndarray, results: pd.DataFrame) -> None:
-    """
-    One histogram per horizon showing the empirical h-day loss distribution
-    with both VaR estimates marked as vertical lines.
-    """
     port_rows = results[results["Entity"] == "Portfolio"].set_index("Horizon")
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
 
@@ -192,10 +142,6 @@ def plot_loss_distributions(daily_losses: np.ndarray, results: pd.DataFrame) -> 
 
 
 def plot_ratio_by_entity(results: pd.DataFrame, entities: list) -> None:
-    """
-    Grouped bar chart of the ratio  HS_VaR / SQRT_VaR  for each entity and
-    horizon.  A ratio of 1 (dashed line) means the SQRT rule is exact.
-    """
     x       = np.arange(len(entities))
     width   = 0.25
     offsets = [-width, 0, width]
@@ -225,10 +171,7 @@ def plot_ratio_by_entity(results: pd.DataFrame, entities: list) -> None:
 
 
 def plot_scaling_curve(results: pd.DataFrame) -> None:
-    """
-    Line chart for the portfolio: actual HS VaR vs. SQRT-scaled VaR across
-    horizons, plus the theoretical √h scaling starting from VaR(1).
-    """
+
     port  = results[results["Entity"] == "Portfolio"].set_index("Horizon")
     var1  = port.loc[1, "HS_VaR"]
     h_arr = np.linspace(1, 10, 100)
