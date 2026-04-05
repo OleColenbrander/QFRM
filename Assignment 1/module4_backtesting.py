@@ -21,7 +21,7 @@ def load_data():
     preds = pd.read_csv(RESULTS_CSV, index_col=0, header=[0, 1, 2], parse_dates=True)
     losses = pd.read_csv(LOSSES_CSV, index_col=0, parse_dates=True)['Loss']
     
-    # Safely assign 1D series to 3-level MultiIndex dataframe
+    # assign 1D series to 3-level MultiIndex dataframe (note the choice previously was for clear overview of individual assets)
     df = preds.copy()
     df[('Realized', 'Portfolio', 'Loss')] = losses
     df = df.dropna(subset=[('Realized', 'Portfolio', 'Loss')])
@@ -51,7 +51,7 @@ def run_backtesting():
         VaR = df[var_col]
         ES  = df[es_col]
         
-        # 1. VaR Validation
+        # 1 VaR Validation
         violations = L > VaR
         N = violations.sum()
         vpy = N / (T_out / 252.0)
@@ -67,7 +67,7 @@ def run_backtesting():
             'Binomial p-value': round(var_pval, 4)
         })
         
-        # 2. ES Validation 
+        # 2 ES Validation 
         violating_days = df.index[violations]
         L_viol = L.loc[violating_days]
         ES_viol = ES.loc[violating_days]
@@ -90,7 +90,7 @@ def run_backtesting():
             'ES p-value': round(es_pval, 4) if pd.notna(es_pval) else "N/A"
         })
         
-        # 3. Spacings
+        # 3    Spacings
         v_idx = np.where(violations)[0] 
         if len(v_idx) > 0:
             spacings = np.diff(np.concatenate(([0], v_idx)))
@@ -116,7 +116,7 @@ def run_backtesting():
     fig_loss.savefig(PLOTS_DIR / 'loss_vs_var_es_fixed.png')
     plt.close(fig_loss)
 
-    # 4. QQ Plots for Spacings
+    # 4      QQ Plots for Spacings
     scale_param = 1.0 / p_var
     fig_qq, axes_qq = plt.subplots(1, len(models), figsize=(4 * len(models), 4))
     if len(models) == 1:
@@ -145,7 +145,7 @@ def run_backtesting():
     fig_qq.savefig(PLOTS_DIR / 'spacings_qq_fixed.png')
     plt.close(fig_qq)
 
-    # Print Tables
+    
     df_var = pd.DataFrame(var_results)
     df_es = pd.DataFrame(es_results)
     
@@ -160,7 +160,7 @@ def run_backtesting():
     print(df_es.to_string(index=False))
     print("\nPlots saved to 'data/plots/'.")
     
-    # Save Combined CSV
+    # veilig opslaagn
     df_var.set_index('Model', inplace=True)
     df_es.set_index('Model', inplace=True)
     combined = df_var.join(df_es.drop(columns=['N']))
